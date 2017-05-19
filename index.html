@@ -1,0 +1,518 @@
+<html>
+<head>
+<title>Wharton Soaring RASP Map</title>
+    <meta charset="utf-8">
+    <meta http-equiv="cache-control" content="no-cache">
+    <meta name="Author" content="Andy Hogben">
+    <meta name="copyright" content="&copy; 2015 Andy Hogben">
+    <meta name="keywords" content="drjack, soaring, soar, glide, forecast, rasp, raspmap, williams, siskiyou, shasta, california, thermal, updraft, hcrit">
+    <meta name="description" content="Soaring forecast maps for both Williams Soaring Center (Williams, CA) and Montague Soaring Center (Montague, CA)">
+    <meta name="description" content="The forecast maps are generated using the software/scripts developed by Jack Glendening (aka 'DrJack' - www.drjack.info)">
+    <meta name="description" content="This web page is free to be copied and modified as anyone sees fit as long as the references to the web server are changed to a different server">
+
+    <style type="text/css">
+        input.raspTime {
+            color: LightGray;
+            border: none;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        input.raspDay {
+            color: black;
+            background: white;
+            border: none;
+            text-align: center;
+        }
+
+    </style>
+
+<script language="JavaScript">
+<!--
+
+// get the string about the browser
+var clientAppStr=navigator.userAgent;
+
+// later iPads and iPhone6 don't provide an event for 'onmouseover' (a bug?)
+// when the hour is 'clicked' (pressed) so they have to be treated specially
+// but rather than figuring out which ones, just deal with all of them the same
+var isBadApple = false;
+
+// variables used to keep track of what's shown
+var views = new Array();
+var images = new Array();
+
+var mapNamePrefix;
+var raspLocation;
+var raspMapName;
+var raspDay;
+var raspHour;
+
+var daySuffix = new Array();
+var currValue = new Array();
+var hours = ["1000", "1100", "1200", "1300", "1400", "1500", "1600", "1700"];
+var defaultHour = "1300";
+
+var hourSuffix = "lst.d2.png";
+
+var williamsSoundings = ["Williams (point 1)", "Goat (point 2)", "Black Butte (point 3)", "Yolla Pk (point 4)", "Hayfork (point 5)", "Crazy Creek (point 6)"];
+var siskiyouSoundings = ["Siskiyou Co (point 1)", "Gunsight (point 2)", "Wright (point 3)", "Carter (point 4)", "Weed (point 5)", "Deer Mtn (point 6)", "Medicine (point 7)", "Dry Lake (point 8)", "Radar (point 9)"];
+var westSoundings = ["Goat (point 1)", "Snow (point 2)", "San Hedrin Mtn (point 3)", "Radar facility (point 4)"];
+var eastSoundings = ["Williams (point 1)", "Sutter Buttes (point 2)", "Chico (point 3)", "Gansner (point 4)", "Nevada County (point 5)"];
+
+var updateCompleted = false;
+
+var animating = false;
+var animateTimer;
+
+function init()
+{
+    if (document.addEventListener) {
+        document.addEventListener("visibilitychange", visibilityChanged);
+    }
+
+    if (window.clientAppStr.indexOf("iPad") != -1 || window.clientAppStr.indexOf("iPhone") != -1) {
+        // not all are a problem but lump them all together
+        window.isBadApple = true;
+
+        // get rid of the onmouseover event for iphones and ipads to try to get around a
+        // bug in later safari versions - the onclick event will hopefully take care of it
+        var inputs = document.getElementById("timeTable").getElementsByTagName("input");
+
+        for (var i = 0; i < inputs.length; i++) {
+            inputs[i].onmouseover = null;
+        }
+
+        // same thing for the days
+        var days = document.getElementById("dayTable").getElementsByTagName("input");
+
+        for (var j = 0; j < days.length; j++) {
+            days[j].onmouseover = null;
+        }
+    }
+
+    daySuffix["today"] = "";
+    daySuffix["today+1"] = "+1";
+    daySuffix["today+2"] = "+2";
+
+    currValue["today"] = ".curr";
+    currValue["today+1"] = ".curr+1";
+    currValue["today+2"] = ".curr+2";
+
+    window.mapNamePrefix = "http://www.huckbone.com/RASP/";
+
+    var defaultLocation = localStorage.getItem("savedLocation");
+
+    // if nothing was saved then use the default
+    if (defaultLocation == null) {
+        defaultLocation = "Williams";
+    }
+
+    // highlight the default location (Williams)
+    var locationButton = document.getElementById(defaultLocation);
+    locationButton.style.color = "red";
+    window.raspLocation = locationButton.value;
+
+    var defaultMapName = localStorage.getItem("savedMap");
+
+    if (defaultMapName == null) {
+        defaultMapName = "hwcrit";
+    }
+
+    // set the default button
+    var defaultButton = document.getElementById(defaultMapName);
+    defaultButton.checked = true;
+    window.raspMapName = defaultButton.value;
+
+    window.raspDay = "today";
+    window.raspHour = window.defaultHour;
+
+    var dayElements = document.getElementById("dayTable");
+    var dayList = dayElements.getElementsByTagName("input");
+    dayList[0].style.background = "black";
+    dayList[0].style.color = "white";
+
+    changeLocation(locationButton);
+}
+
+function initHours() {
+    window.animating = false;
+    var timeInputs = document.getElementById("timeTable");
+    var inputs = timeInputs.getElementsByTagName("input");
+
+    for (var i = 0; i < inputs.length; i++) {
+        inputs[i].style.cursor = "pointer";
+        inputs[i].style.color = "LightGrey";
+        window.images[i] = null;  // clear the image so the cache isn't used
+    }
+}
+
+//
+// Change the 'location' (e.g, Williams, Williams West, etc.)
+//
+function changeLocation(element) {
+    initHours();
+    window.updateCompleted = true;
+    var viewList = document.getElementsByTagName("button");
+
+    for (var i = 0; i < viewList.length; i++) {
+        viewList[i].style.color = "black";
+    }
+
+    element.style.color = "red";
+    window.raspLocation = element.value;
+
+    var mapList = document.getElementsByClassName("sounding");
+    var soundingNames;
+
+    if (window.raspLocation == "Williams") {
+        soundingNames = williamsSoundings;
+    } else if (window.raspLocation == "Siskiyou") {
+        soundingNames = siskiyouSoundings;
+    } else if (window.raspLocation == "Williams_West") {
+        soundingNames = westSoundings;
+    } else {
+        soundingNames = eastSoundings;
+    }
+
+    for (i = 0; i < soundingNames.length; i++) {
+        mapList[i].nextSibling.textContent = soundingNames[i];
+        mapList[i].style.display = "";
+    }
+
+    for (; i < mapList.length; i++) {
+        mapList[i].style.display = "none";
+        mapList[i].nextSibling.textContent = "";
+
+        if (window.raspMapName == mapList[i].id) {
+            // sounding is out of bounds at the new location so
+            // set the current map to an arbitrary 'sounding1'
+            mapList[i].checked = false;
+            window.raspMapName = "sounding1";
+            document.getElementById(window.raspMapName).checked = true;
+        }
+    }
+
+    var timeElement = document.getElementById("today");
+
+    changeDay(timeElement);
+}
+
+//
+// Change the map (e.g, Hcrit, press850, etc.)
+//
+function changeMap(element) {
+    initHours();
+    window.raspMapName = element.value;
+
+    doChangeImage(document.getElementById(window.raspHour));
+}
+
+//
+// Change day while keeping current location, map and time
+//
+function changeDay(element) {
+    if (window.raspMapName == "sectional") {
+        return;
+    }
+
+    initHours();
+    window.updateCompleted = true;
+
+    var dayElements = document.getElementById("dayTable");
+    var dayList = dayElements.getElementsByTagName("input");
+
+    for (var i = 0; i < dayList.length; i++) {
+        dayList[i].style.color = "black";
+        dayList[i].style.background = "white";
+    }
+
+    element.style.color = "white";
+    element.style.background = "black";
+    window.raspDay = element.id;
+
+    var mapName = document.getElementById(window.raspHour);
+
+    doChangeImage(mapName);
+}
+
+function updateRunTime() {
+    var xmlhttp = new XMLHttpRequest();
+    var url = window.mapNamePrefix + window.raspLocation + window.daySuffix[raspDay] + "/" + "completed.txt";
+
+    xmlhttp.onreadystatechange = function() {
+        if (xmlhttp.readyState == 4 && xmlhttp.status == 200) {
+            document.getElementById("runTime").innerHTML = "Rasp run completed: " + xmlhttp.responseText;
+        }
+    };
+
+    xmlhttp.open("GET", url, true);
+    xmlhttp.send();
+}
+
+//
+// Image change while keeping the existing location, map and time
+//
+function doChangeImage(element) {
+    var theId = element.id;
+    var hourIndex = theId.substr(1, 1);
+
+    // if it's in the cache, use it
+    if (window.images[hourIndex] != null) {
+        document.image.src = window.images[hourIndex].src;
+    } else {
+        if (window.updateCompleted) {
+            window.updateCompleted = false;
+            updateRunTime();
+        }
+
+        var image = new Image();
+        image.time = element.id;
+        var imageSrcStr = window.mapNamePrefix + window.raspLocation + window.daySuffix[raspDay] + "/" + window.raspMapName + window.currValue[raspDay] + "." + theId + hourSuffix;
+        image.src = imageSrcStr;
+
+        // first change the image
+        document.image.src = image.src;
+        window.images[hourIndex] = image;
+
+        for (var h = 0; h < window.hours.length; h++) {
+            var theHour = window.hours[h];
+
+            if (theHour.substr(1, 1) != hourIndex) {
+                var imageForCache = new Image();
+
+                // make images that have not loaded yet have a greyed out time entry
+                // but only change to black if it doesn't have a color already (which
+                // means it's using the css class) to not interfere with mouseovers
+                imageForCache.onload = function() {
+                    var input = document.getElementById(this.time);  // id is saved in 'time'
+                    input.style.color = "black";
+                };
+
+                imageForCache.time = theHour;
+                imageSrcStr = window.mapNamePrefix + window.raspLocation + window.daySuffix[raspDay] + "/" + window.raspMapName + window.currValue[raspDay] + "." + theHour + hourSuffix;
+                imageForCache.src = imageSrcStr;
+                window.images[h] = imageForCache;
+            }
+
+        }
+    }
+
+    // reset the highlighting of all times
+    var inputs = document.getElementById("timeTable").getElementsByTagName("input");
+
+    for (var i = 0; i < inputs.length; i++) {
+        inputs[i].style.cursor = "pointer";  // attempt to get around ipad/iphone problem
+
+        // only change the highlighting if this is the current highlighted time (which means the text colour is white)
+        if (inputs[i].style.color == "white") {
+            inputs[i].style.color = "black";
+            inputs[i].style.background = "white";
+        }
+    }
+
+    // finally, change the color of the selected time...
+    element.style.color = "white";
+    element.style.background = "black";
+
+    // ... and set the hour value
+    window.raspHour = theId;
+}
+
+function changeImage(element) {
+    if (window.raspMapName == "sectional" || window.isBadApple) {
+        return;
+    }
+
+    doChangeImage(element);
+}
+
+function clickChangeImage(element) {
+    // if the click is from an iphone or ipad, let it go through, otherwise
+    // the change should have already happened by the onmouseover so skip it
+    if (window.isBadApple) {
+        doChangeImage(element);
+    }
+}
+
+//
+// Show the sectional for the desired area
+//
+function showSectional(element) {
+    window.raspMapName = element.value;
+
+    if (window.raspLocation == "Williams") {
+        image.src = "http://www.huckbone.com/RASP/Williams_Forecast_Area.png";
+    } else if (window.raspLocation == "Williams_West") {
+        image.src = "http://www.huckbone.com/RASP/Williams_West_Forecast_Area.png";
+    } else if (window.raspLocation == "Montague") {
+    }
+}
+
+function doAnimate() {
+    var newHour = parseInt(window.raspHour) + 100;
+
+    if (newHour > 1700) {
+        window.raspHour = "1000";
+    } else {
+        window.raspHour = newHour.toString();
+    }
+
+    var elem = document.getElementById(window.raspHour);
+    changeImage(elem);
+}
+
+function toggleAnimate() {
+    if (window.animating) {
+        clearInterval(animateTimer);
+    } else {
+        animateTimer = setInterval(doAnimate, 1500);
+    }
+
+    window.animating = !window.animating;
+}
+
+function visibilityChanged() {
+    if (window.animating) {
+        toggleAnimate();
+    }
+}
+
+function saveStartupValues(element) {
+    var locationToSave = document;
+    localStorage.setItem("savedLocation", window.raspLocation);
+    localStorage.setItem("savedMap", window.raspMapName);
+}
+
+function clearStartupValues(element) {
+    localStorage.clear();
+}
+
+function toggleChangeLog(element) {
+    var changeLog = document.getElementById("changeLog");
+    var curVal = changeLog.style.display;
+
+    if (curVal == "none") {
+        changeLog.style.display = "block";
+    } else {
+        changeLog.style.display = "none";
+    }
+}
+
+// -->
+</script>
+</head>
+
+<body onload="init()" style="margin-left: 2%; margin-right: 2%;">
+
+<div style="text-align: center;">
+
+<table align="left">
+  <tr>
+    <td>
+      <table id="timeTable" border="0">
+        <tr><th>Time (PST)</th></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1000" name=".1000lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="10:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1100" name=".1100lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="11:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1200" name=".1200lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="12:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1300" name=".1300lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="13:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1400" name=".1400lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="14:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1500" name=".1500lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="15:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1600" name=".1600lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="16:00"/></td></tr>
+        <tr><td><input readonly="readonly" type="text" size="5" id="1700" name=".1700lst.d2.png" class="raspTime" onmouseover="changeImage(this)" onclick="clickChangeImage(this)" value="17:00"/></td></tr>
+        <tr><td><button id="animate" onclick="toggleAnimate()" value="Animate">Animate (@ 2 sec)</button></td></tr>
+      </table>
+    </td>
+
+    <td>
+      <table id="locationTable" align="center">
+        <tr>
+          <td><button id="Williams" onclick="changeLocation(this)" value="Williams">Williams</button></td>
+          <td><button id="West" onclick="changeLocation(this)" value="Williams_West">Williams West</button></td>
+          <td><button id="East" onclick="changeLocation(this)" value="Williams_East">Williams East</button></td>
+          <td><button id="Siskiyou" onclick="changeLocation(this)" value="Siskiyou">Montague</button></td>
+        </tr>
+      </table>
+      <table id="dayTable" align="center">
+        <tr>
+          <td align="center"><input readonly="readonly" type="text" size="7" id="today" class="raspDay" onmouseover="changeDay(this)" onclick="changeDay(this)" value="Today"/></td>
+          <td align="center"><input readonly="readonly" type="text" size="7" id="today+1" class="raspDay" onmouseover="changeDay(this)" onclick="changeDay(this)" value="Today+1"/></td>
+          <td align="center"><input readonly="readonly" type="text" size="7" id="today+2" class="raspDay" onmouseover="changeDay(this)" onclick="changeDay(this)" value="Today+2"/></td>
+        </tr>
+      </table>
+      <img name="image" src="http://www.huckbone.com/RASP/hwcrit.curr.1000lst.d2.png" alt="forecast image" width="800" height="800"/>
+      <p align="center" id="runTime">&nbsp;</p>
+    </td>
+
+    <td align="left">
+      <form id="mapForm" action="#">
+        <label for="wstar_bsratio"><input id="wstar_bsratio" type="radio" name="mapType" value="wstar_bsratio" onclick="changeMap(this)">Thermal Updraft & B/S</label><br>
+        <label for="wstar"><input id="wstar" type="radio" name="mapType" value="wstar" onclick="changeMap(this)">Thermal Updraft Velocity</label><br>
+        <label for="bsratio"><input id="bsratio" type="radio" name="mapType" value="bsratio" onclick="changeMap(this)">Bouyancy/Shear Ratio</label><br>
+        <label for="hwcrit"><input id="hwcrit" type="radio" name="mapType" value="hwcrit" onclick="changeMap(this)">H-Crit</label><br>
+        <label for="dwcrit"><input id="dwcrit" type="radio" name="mapType" value="dwcrit" onclick="changeMap(this)">H-Crit Depth</label><br>
+        <label for="hbl"><input id="hbl" type="radio" name="mapType" value="hbl" onclick="changeMap(this)">BL Top</label><br>
+        <label for="dbl"><input id="dbl" type="radio" name="mapType" value="dbl" onclick="changeMap(this)">BL Depth</label><br>
+        <label for="bltopvariab"><input id="bltopvariab" type="radio" name="mapType" value="bltopvariab" onclick="changeMap(this)">Thermal Height Uncertainty</label><br>
+        <label for="sfctemp"><input id="sfctemp" type="radio" name="mapType" value="sfctemp" onclick="changeMap(this)">Surface Temperature</label><br>
+        <label for="sfcwind"><input id="sfcwind" type="radio" name="mapType" value="sfcwind" onclick="changeMap(this)">Surface Wind</label><br>
+        <label for="blwind"><input id="blwind" type="radio" name="mapType" value="blwind" onclick="changeMap(this)">BL Avg. Wind</label><br>
+        <label for="bltopwind"><input id="bltopwind" type="radio" name="mapType" value="bltopwind" onclick="changeMap(this)">Wind at BL Top</label><br>
+        <label for="wblmaxmin"><input id="wblmaxmin" type="radio" name="mapType" value="wblmaxmin" onclick="changeMap(this)">BL Max Up/Down</label><br>
+        <label for="zsfclcldif"><input id="zsfclcldif" type="radio" name="mapType" value="zsfclcldif" onclick="changeMap(this)">Cu Potential</label><br>
+        <label for="zsfclcl"><input id="zsfclcl" type="radio" name="mapType" value="zsfclcl" onclick="changeMap(this)">Cu Cloudbase (MSL)</label><br>
+        <label for="zsfclclmask"><input id="zsfclclmask" type="radio" name="mapType" value="zsfclclmask" onclick="changeMap(this)">Cu Bases (CuPot>0)</label><br>
+        <label for="zblcldif"><input id="zblcldif" type="radio" name="mapType" value="zblcldif" onclick="changeMap(this)">OD Potential</label><br>
+        <label for="zblcl"><input id="zblcl" type="radio" name="mapType" value="zblcl" onclick="changeMap(this)">OD Cloudbase (MSL)</label><br>
+        <label for="zblclmask"><input id="zblclmask" type="radio" name="mapType" value="zblclmask" onclick="changeMap(this)">OD Cloudbase (CuPot>0)</label><br>
+        <label for="sfcdewpt"><input id="sfcdewpt" type="radio" name="mapType" value="sfcdewpt" onclick="changeMap(this)">Sfc Dew Point Temp</label><br>
+        <label for="cape"><input id="cape" type="radio" name="mapType" value="cape" onclick="changeMap(this)">CAPE</label><br>
+        <label for="press850"><input id="press850" type="radio" name="mapType" value="press850" onclick="changeMap(this)">Vertical Velocity at 850 mb</label><br>
+        <label for="press700"><input id="press700" type="radio" name="mapType" value="press700" onclick="changeMap(this)">Vertical Velocity at 700 mb</label><br>
+        <label for="press500"><input id="press500" type="radio" name="mapType" value="press500" onclick="changeMap(this)">Vertical Velocity at 500 mb</label><br>
+        <label for="boxwmax"><input id="boxwmax" type="radio" name="mapType" value="boxwmax" onclick="changeMap(this)">Wind Parallel Section</label><br>
+
+        <label for="sounding1"><input id="sounding1" class="sounding" type="radio" name="mapType" value="sounding1" onclick="changeMap(this)">Williams (point 1)</label><br>
+        <label for="sounding2"><input id="sounding2" class="sounding" type="radio" name="mapType" value="sounding2" onclick="changeMap(this)">Goat (point 2)</label><br>
+        <label for="sounding3"><input id="sounding3" class="sounding" type="radio" name="mapType" value="sounding3" onclick="changeMap(this)">Black Butte (point 3)</label><br>
+        <label for="sounding4"><input id="sounding4" class="sounding" type="radio" name="mapType" value="sounding4" onclick="changeMap(this)">Yolla Pk (point 4)</label><br>
+        <label for="sounding5"><input id="sounding5" class="sounding" type="radio" name="mapType" value="sounding5" onclick="changeMap(this)">Hayfork (point 5)</label><br>
+        <label for="sounding6"><input id="sounding6" class="sounding" type="radio" name="mapType" value="sounding6" onclick="changeMap(this)">Crazy Creek (point 6)</label><br>
+        <label for="sounding7"><input id="sounding7" class="sounding" type="radio" name="mapType" value="sounding7" onclick="changeMap(this)">Medicine (point 7)</label><br>
+        <label for="sounding8"><input id="sounding8" class="sounding" type="radio" name="mapType" value="sounding8" onclick="changeMap(this)">Dry Lake (point 8)</label><br>
+        <label for="sounding9"><input id="sounding9" class="sounding" type="radio" name="mapType" value="sounding9" onclick="changeMap(this)">Radar (point 9)</label><br>
+        <!-- <input id="sectional" type="radio" name="mapType" value="sectional" onclick="showSectional(this)">Area Sectional<br> -->
+          <a href="http://www.drjack.info/RASP/INFO/parameters.html" target="_blank">RASP Parameter Descriptions</a>
+      </form>
+    </td>
+  </tr>
+
+  <tr>
+    <td><button id="saveSettings" onclick="saveStartupValues(this)" value="saveSettings" title="Save the current location and map type for next time you visit">Save Settings</button></td>
+    <td><button id="clearSettings" onclick="clearStartupValues(this)" value="clearSettings" title="Clear the settings">Clear Settings</button></td>
+  </tr>
+
+  <tr><td colspan="3">&nbsp;</td></tr>
+
+  <tr>
+    <td colspan="3">
+      <button id="toggleChangeLog" onclick="toggleChangeLog(this)" title="Show/hide the change log">Toggle Change Log</button>
+      <div id="changeLog" style="text-align: left; display:none">
+        <p>5-11-15 - Added EXPERIMENTAL animation of hourly maps.  Animation is stopped when<br>
+           the animate button is clicked again, the browser/tab loses focus or a different map/day/location<br>
+           is chosen.
+           On loss of focus animation is not automatically started when focus returns.<br>
+           There could be some bugs and, if so, it could chew up the battery on a mobile device.<br>
+           Let me know if you notice any problems<br>
+           <em>Not recommended on slow mobile devices as they can't paint fast enough for 1 second refresh.</em>
+        </p>
+        <p>5-11-15 - Added link to RASP parameter descriptions</p>
+        <p>8-19-15 - Fixed updating of soundings based on location</p>
+      </div>
+    </td>
+  </tr>
+</table>
+</div>
+
+</body>
+</html>
